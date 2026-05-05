@@ -27,9 +27,11 @@ SimpleIPTV is a modern, lightweight, and feature-rich IPTV player for Android, b
 
 ## 📸 Screenshots
 
-![Dashboard](images/screenshot1.jpg)
-![Dashboard](images/screenshot2.jpg)
-![Dashboard](images/screenshot3.jpg)
+<p align="center">
+  <img src="images/screenshot1.jpg" width="250">
+  <img src="images/screenshot2.jpg" width="250">
+  <img src="images/screenshot3.jpg" width="250">
+</p>
 
 ## 🛠️ Tech Stack
 
