@@ -117,6 +117,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.lazy.rememberLazyListState
 
 // --- DATA MODELS ---
 
@@ -929,6 +930,9 @@ fun ChannelListScreen(
 
     val rootBgColor = if (bgColorSetting == "BLACK") Color.Black else Color(0xFF070B14)
 
+    val categoryListState = rememberLazyListState()
+    val channelListState = rememberLazyListState()
+
     // Render minimalist UI during Picture-in-Picture mode
     if (isAppInPipMode.value) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -1089,6 +1093,28 @@ fun ChannelListScreen(
         }
     }
 
+    LaunchedEffect(configuration.orientation) {
+        val activeCategoryIndex = filteredCategories.indexOf(selectedCategory)
+        if (activeCategoryIndex > 0) {
+            categoryListState.scrollToItem((activeCategoryIndex - 2).coerceAtLeast(0))
+        }
+
+        val activeChannelIndex = filteredChannels.indexOf(previewChannel)
+        if (activeChannelIndex != -1) {
+            channelListState.scrollToItem((activeChannelIndex - 3).coerceAtLeast(0))
+        }
+    }
+
+    LaunchedEffect(selectedCategory) {
+        val activeChannelIndex = filteredChannels.indexOf(previewChannel)
+
+        if (activeChannelIndex != -1) {
+            channelListState.scrollToItem((activeChannelIndex - 3).coerceAtLeast(0))
+        } else {
+            channelListState.scrollToItem(0)
+        }
+    }
+
     BackHandler(onBack = onBack)
 
     Box(modifier = Modifier.fillMaxSize().background(rootBgColor)) {
@@ -1150,10 +1176,16 @@ fun ChannelListScreen(
                             DarkSearchField(categorySearchQuery, "Search Category") { categorySearchQuery = it }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
-                        LazyColumn {
+                        LazyColumn(state = categoryListState) {
                             items(filteredCategories) { cat ->
                                 val isBrowsing = selectedCategory == cat
                                 val isPlaying = previewChannel?.category == cat
+
+                                val count = when(cat) {
+                                    "ALL" -> channels.size
+                                    "FAVORITES" -> favoriteIds.size
+                                    else -> channels.count { it.category == cat }
+                                }.toString()
 
                                 Row(
                                     modifier = Modifier
@@ -1173,8 +1205,14 @@ fun ChannelListScreen(
                                         color = if (isBrowsing || isPlaying) Color.White else Color.Gray,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis,
+                                        lineHeight = 10.sp
                                     )
+
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(count, color = Color.Gray, fontSize = 8.sp)
 
                                     if (isPlaying) {
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -1188,7 +1226,7 @@ fun ChannelListScreen(
                     Column(modifier = Modifier.weight(0.25f).fillMaxHeight()) {
                         DarkSearchField(channelSearchQuery, "Search Channels") { channelSearchQuery = it }
                         Spacer(modifier = Modifier.height(4.dp))
-                        LazyColumn {
+                        LazyColumn(state = channelListState) {
                             items(filteredChannels) { channel ->
                                 val isPreviewed = previewChannel?.id == channel.id
                                 val isFavorite = favoriteIds.contains(channel.id)
@@ -1479,10 +1517,15 @@ fun ChannelListScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            state = if (isShowingCategories) categoryListState else channelListState
+                        ) {
                             if (isShowingCategories) {
                                 items(filteredCategories) { cat ->
                                     val isSelected = selectedCategory == cat
+                                    val isPlaying = previewChannel?.category == cat
+
                                     val count = when(cat) {
                                         "ALL" -> channels.size
                                         "FAVORITES" -> favoriteIds.size
@@ -1495,9 +1538,25 @@ fun ChannelListScreen(
                                             .padding(vertical = 12.dp, horizontal = 16.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        if (cat == "FAVORITES") { Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFACC15), modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(12.dp)) }
-                                        Text(cat, color = if (isSelected) Color.White else Color.Gray, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                        if (cat == "FAVORITES") {
+                                            Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFACC15), modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                        }
+
+                                        Text(
+                                            text = cat,
+                                            color = if (isSelected || isPlaying) Color.White else Color.Gray,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.weight(1f)
+                                        )
+
                                         Text(count, color = Color.Gray, fontSize = 12.sp)
+
+                                        if (isPlaying) {
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Box(modifier = Modifier.width(3.dp).height(14.dp).background(Color(0xFFE91E63)))
+                                        }
                                     }
                                     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.05f)))
                                 }
