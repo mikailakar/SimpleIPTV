@@ -118,6 +118,12 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.ui.draw.alpha
+import androidx.compose.material.icons.filled.VerticalAlignTop
+import androidx.compose.material.icons.filled.VerticalAlignBottom
+import androidx.compose.ui.draw.scale
 
 // --- DATA MODELS ---
 
@@ -1900,30 +1906,165 @@ fun SettingsScreen(
     @Composable
     fun <T> ReorderDialog(title: String, items: List<T>, itemLabel: (T) -> String, onDismiss: () -> Unit, onSave: (List<T>) -> Unit) {
         var currentList by remember { mutableStateOf(items) }
+        var selectedItems by remember { mutableStateOf(setOf<T>()) }
+
+        val listState = rememberLazyListState()
+        val coroutineScope = rememberCoroutineScope()
+
+        fun scrollToSelection() {
+            coroutineScope.launch {
+                val firstSelectedIndex = currentList.indexOfFirst { it in selectedItems }
+                if (firstSelectedIndex != -1) {
+                    listState.animateScrollToItem((firstSelectedIndex - 2).coerceAtLeast(0))
+                }
+            }
+        }
+
+        fun moveSelectedUp() {
+            val indices = currentList.mapIndexedNotNull { i, item -> if (item in selectedItems) i else null }
+            if (indices.isNotEmpty() && indices.first() > 0) {
+                val newList = currentList.toMutableList()
+                for (i in indices) Collections.swap(newList, i, i - 1)
+                currentList = newList
+                scrollToSelection()
+            }
+        }
+
+        fun moveSelectedDown() {
+            val indices = currentList.mapIndexedNotNull { i, item -> if (item in selectedItems) i else null }
+            if (indices.isNotEmpty() && indices.last() < currentList.size - 1) {
+                val newList = currentList.toMutableList()
+                for (i in indices.reversed()) Collections.swap(newList, i, i + 1)
+                currentList = newList
+                scrollToSelection()
+            }
+        }
+
+        fun moveSelectedTop() {
+            val sel = currentList.filter { it in selectedItems }
+            val unsel = currentList.filter { it !in selectedItems }
+            currentList = sel + unsel
+            scrollToSelection()
+        }
+
+        fun moveSelectedBottom() {
+            val sel = currentList.filter { it in selectedItems }
+            val unsel = currentList.filter { it !in selectedItems }
+            currentList = unsel + sel
+            scrollToSelection()
+        }
+
+        val targetIndices = currentList.mapIndexedNotNull { i, t -> if (t in selectedItems) i else null }
+        val canMoveUp = targetIndices.isNotEmpty() && targetIndices.first() > 0
+        val canMoveDown = targetIndices.isNotEmpty() && targetIndices.last() < currentList.size - 1
 
         Dialog(onDismissRequest = onDismiss) {
             Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text("Save", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE91E63), modifier = Modifier.clickable { onSave(currentList); onDismiss() }.padding(4.dp))
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Cancel",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Gray,
+                                modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
+                            )
+                            Text(
+                                "Save",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFE91E63),
+                                modifier = Modifier.clickable { onSave(currentList); onDismiss() }.padding(4.dp)
+                            )
+                        }
                     }
+
                     Spacer(modifier = Modifier.height(12.dp))
-                    LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            IconButton(
+                                onClick = { moveSelectedTop() },
+                                enabled = canMoveUp,
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.VerticalAlignTop, null, tint = if (canMoveUp) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
+
+                            IconButton(
+                                onClick = { moveSelectedUp() },
+                                enabled = canMoveUp,
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.KeyboardArrowUp, null, tint = if (canMoveUp) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
+
+                            IconButton(
+                                onClick = { moveSelectedDown() },
+                                enabled = canMoveDown,
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.KeyboardArrowDown, null, tint = if (canMoveDown) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
+
+                            IconButton(
+                                onClick = { moveSelectedBottom() },
+                                enabled = canMoveDown,
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.VerticalAlignBottom, null, tint = if (canMoveDown) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
+                        }
+
+                        if (selectedItems.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
+                                Text("${selectedItems.size} selected", fontSize = 10.sp, color = Color(0xFFFACC15))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "CLEAR",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    modifier = Modifier.clickable { selectedItems = emptySet() }.padding(4.dp)
+                                )
+                            }
+                        } else {
+                            Text("Select to move", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(end = 8.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    LazyColumn(state = listState, modifier = Modifier.heightIn(max = 350.dp)) {
                         items(currentList.size) { index ->
                             val item = currentList[index]
-                            Row(modifier = Modifier.fillMaxWidth().height(36.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(itemLabel(item), fontSize = 12.sp, color = Color.White, maxLines = 1, modifier = Modifier.weight(1f))
-                                Row {
-                                    IconButton(
-                                        onClick = { if (index > 0) { val list = currentList.toMutableList(); val temp = list[index]; list[index] = list[index-1]; list[index-1] = temp; currentList = list } },
-                                        modifier = Modifier.size(24.dp)
-                                    ) { Icon(Icons.Default.KeyboardArrowUp, null, tint = if (index > 0) Color.White else Color.Gray) }
-                                    IconButton(
-                                        onClick = { if (index < currentList.size - 1) { val list = currentList.toMutableList(); val temp = list[index]; list[index] = list[index+1]; list[index+1] = temp; currentList = list } },
-                                        modifier = Modifier.size(24.dp)
-                                    ) { Icon(Icons.Default.KeyboardArrowDown, null, tint = if (index < currentList.size - 1) Color.White else Color.Gray) }
-                                }
+                            val isSelected = item in selectedItems
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedItems = if (isSelected) selectedItems - item else selectedItems + item
+                                    }
+                                    .background(if (isSelected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
+                                    .padding(vertical = 8.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isSelected,
+                                    onCheckedChange = null,
+                                    colors = CheckboxDefaults.colors(checkedColor = Color(0xFFE91E63), uncheckedColor = Color.Gray),
+                                    modifier = Modifier.scale(0.8f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(itemLabel(item), fontSize = 12.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -2038,6 +2179,19 @@ fun VideoPlayerScreen(
     val currentPlaylist = remember(playlistId) { playlists.find { it.id == playlistId } }
     var epgList by remember { mutableStateOf<List<EpgProgram>>(emptyList()) }
     var isEpgLoading by remember { mutableStateOf(false) }
+    
+    val volumeInteractionSource = remember { MutableInteractionSource() }
+    val isVolumePressed by volumeInteractionSource.collectIsPressedAsState()
+    val isVolumeDragged by volumeInteractionSource.collectIsDraggedAsState()
+    val isVolumeActive = isVolumePressed || isVolumeDragged
+
+    val brightnessInteractionSource = remember { MutableInteractionSource() }
+    val isBrightnessPressed by brightnessInteractionSource.collectIsPressedAsState()
+    val isBrightnessDragged by brightnessInteractionSource.collectIsDraggedAsState()
+    val isBrightnessActive = isBrightnessPressed || isBrightnessDragged
+
+    var isNativeDialogOpen by remember { mutableStateOf(false) }
+    val isAnyDialogOpen = showEpgDialog || isNativeDialogOpen
 
     LaunchedEffect(showEpgDialog, currentChannel) {
         if (showEpgDialog) {
@@ -2062,8 +2216,8 @@ fun VideoPlayerScreen(
         }
     }
 
-    LaunchedEffect(showControls, isPlaying) {
-        if (showControls && isPlaying) {
+    LaunchedEffect(showControls, isPlaying, isAnyDialogOpen, isVolumeActive, isBrightnessActive) {
+        if (showControls && isPlaying && !isAnyDialogOpen && !isVolumeActive && !isBrightnessActive) {
             delay(3000)
             showControls = false
         }
@@ -2147,12 +2301,12 @@ fun VideoPlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.6f))
+                    .background(if (isBrightnessActive) Color.Transparent else Color.Black.copy(alpha = 0.6f))
                     .padding(horizontal = 24.dp, vertical = 16.dp)
             ) {
 
                 Row(
-                    modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+                    modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).alpha(if (isBrightnessActive) 0f else 1f),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2195,8 +2349,8 @@ fun VideoPlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(Icons.Default.BrightnessMedium, contentDescription = "Brightness", tint = Color.White, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Icon(Icons.Default.BrightnessMedium, contentDescription = "Brightness", tint = Color.White, modifier = Modifier.size(20.dp).alpha(if (isBrightnessActive) 0f else 1f))
+                    Spacer(modifier = Modifier.height(8.dp).alpha(if (isBrightnessActive) 0f else 1f))
                     Box(modifier = Modifier.height(160.dp).width(40.dp), contentAlignment = Alignment.Center) {
                         Slider(
                             value = brightness,
@@ -2210,13 +2364,14 @@ fun VideoPlayerScreen(
                             modifier = Modifier
                                 .requiredWidth(160.dp)
                                 .rotate(-90f),
-                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color(0xFFE91E63))
+                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color(0xFFE91E63)),
+                            interactionSource = brightnessInteractionSource
                         )
                     }
                 }
 
                 Row(
-                    modifier = Modifier.align(Alignment.Center),
+                    modifier = Modifier.align(Alignment.Center).alpha(if (isBrightnessActive) 0f else 1f),
                     horizontalArrangement = Arrangement.spacedBy(32.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2238,7 +2393,7 @@ fun VideoPlayerScreen(
                 }
 
                 Column(
-                    modifier = Modifier.align(Alignment.CenterEnd),
+                    modifier = Modifier.align(Alignment.CenterEnd).alpha(if (isBrightnessActive) 0f else 1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -2276,7 +2431,8 @@ fun VideoPlayerScreen(
                             modifier = Modifier
                                 .requiredWidth(160.dp)
                                 .rotate(-90f),
-                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color(0xFFE91E63))
+                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color(0xFFE91E63)),
+                            interactionSource = volumeInteractionSource
                         )
                     }
                 }
@@ -2284,7 +2440,7 @@ fun VideoPlayerScreen(
                 if (isLandscape) {
 
                     Row(
-                        modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
+                        modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).alpha(if (isBrightnessActive) 0f else 1f),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.Bottom
                     ) {
@@ -2312,10 +2468,20 @@ fun VideoPlayerScreen(
                         Spacer(modifier = Modifier.width(16.dp))
 
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            IconButton(onClick = { TrackSelectionDialogBuilder(context, "Subtitles", sharedPlayer, C.TRACK_TYPE_TEXT).setTheme(android.R.style.Theme_DeviceDefault_Dialog).setShowDisableOption(true).build().show() }, modifier = Modifier.size(36.dp)) {
+                            IconButton(onClick = {
+                                val dialog = TrackSelectionDialogBuilder(context, "Subtitles", sharedPlayer, C.TRACK_TYPE_TEXT).setTheme(android.R.style.Theme_DeviceDefault_Dialog).setShowDisableOption(true).build()
+                                isNativeDialogOpen = true
+                                dialog.setOnDismissListener { isNativeDialogOpen = false }
+                                dialog.show()
+                            }, modifier = Modifier.size(36.dp)) {
                                 Icon(Icons.Default.Subtitles, contentDescription = "Subtitles", tint = Color.White)
                             }
-                            IconButton(onClick = { TrackSelectionDialogBuilder(context, "Audio Track", sharedPlayer, C.TRACK_TYPE_AUDIO).setTheme(android.R.style.Theme_DeviceDefault_Dialog).build().show() }, modifier = Modifier.size(36.dp)) {
+                            IconButton(onClick = {
+                                val dialog = TrackSelectionDialogBuilder(context, "Audio Track", sharedPlayer, C.TRACK_TYPE_AUDIO).setTheme(android.R.style.Theme_DeviceDefault_Dialog).build()
+                                isNativeDialogOpen = true
+                                dialog.setOnDismissListener { isNativeDialogOpen = false }
+                                dialog.show()
+                            }, modifier = Modifier.size(36.dp)) {
                                 Icon(Icons.Default.Audiotrack, contentDescription = "Audio Track", tint = Color.White)
                             }
                             if (videoWidth > 0 && videoHeight > 0) {
@@ -2335,7 +2501,7 @@ fun VideoPlayerScreen(
                 } else {
 
                     Row(
-                        modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
+                        modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).alpha(if (isBrightnessActive) 0f else 1f),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.Bottom
                     ) {
@@ -2365,10 +2531,20 @@ fun VideoPlayerScreen(
 
                         Column(horizontalAlignment = Alignment.End) {
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                IconButton(onClick = { TrackSelectionDialogBuilder(context, "Subtitles", sharedPlayer, C.TRACK_TYPE_TEXT).setTheme(android.R.style.Theme_DeviceDefault_Dialog).setShowDisableOption(true).build().show() }, modifier = Modifier.size(36.dp)) {
+                                IconButton(onClick = {
+                                    val dialog = TrackSelectionDialogBuilder(context, "Subtitles", sharedPlayer, C.TRACK_TYPE_TEXT).setTheme(android.R.style.Theme_DeviceDefault_Dialog).setShowDisableOption(true).build()
+                                    isNativeDialogOpen = true
+                                    dialog.setOnDismissListener { isNativeDialogOpen = false }
+                                    dialog.show()
+                                }, modifier = Modifier.size(36.dp)) {
                                     Icon(Icons.Default.Subtitles, contentDescription = "Subtitles", tint = Color.White)
                                 }
-                                IconButton(onClick = { TrackSelectionDialogBuilder(context, "Audio Track", sharedPlayer, C.TRACK_TYPE_AUDIO).setTheme(android.R.style.Theme_DeviceDefault_Dialog).build().show() }, modifier = Modifier.size(36.dp)) {
+                                IconButton(onClick = {
+                                    val dialog = TrackSelectionDialogBuilder(context, "Audio Track", sharedPlayer, C.TRACK_TYPE_AUDIO).setTheme(android.R.style.Theme_DeviceDefault_Dialog).build()
+                                    isNativeDialogOpen = true
+                                    dialog.setOnDismissListener { isNativeDialogOpen = false }
+                                    dialog.show()
+                                }, modifier = Modifier.size(36.dp)) {
                                     Icon(Icons.Default.Audiotrack, contentDescription = "Audio Track", tint = Color.White)
                                 }
                             }
