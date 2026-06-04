@@ -118,12 +118,20 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.ui.draw.alpha
 import androidx.compose.material.icons.filled.VerticalAlignTop
 import androidx.compose.material.icons.filled.VerticalAlignBottom
 import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.ui.input.pointer.PointerEventPass
 
 // --- DATA MODELS ---
 
@@ -1261,10 +1269,38 @@ fun ChannelListScreen(
 
                     Column(modifier = Modifier.weight(0.60f).fillMaxHeight()) {
 
+                        val scope = rememberCoroutineScope()
+                        val swipeProgress = remember { Animatable(0f) }
+
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(16f / 9f)
+                                .graphicsLayer {
+                                    transformOrigin = TransformOrigin(0.5f, 1f)
+
+                                    val scale = (1f + (-swipeProgress.value / 300f)).coerceIn(1f, 1.15f)
+                                    scaleX = scale
+                                    scaleY = scale
+                                }
+                                .pointerInput(Unit) {
+                                    detectVerticalDragGestures(
+                                        onDragEnd = {
+                                            scope.launch {
+                                                if (swipeProgress.value < -120f) {
+                                                    previewChannel?.let { onChannelClick(it, filteredChannels) }
+                                                } else {
+                                                    swipeProgress.animateTo(0f)
+                                                }
+                                            }
+                                        },
+                                        onVerticalDrag = { change, dragAmount ->
+                                            scope.launch {
+                                                swipeProgress.snapTo((swipeProgress.value + dragAmount).coerceIn(-200f, 0f))
+                                            }
+                                        }
+                                    )
+                                }
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
@@ -1379,10 +1415,37 @@ fun ChannelListScreen(
                 // Portrait Layout
                 Column(modifier = Modifier.fillMaxSize()) {
 
+                    val scope = rememberCoroutineScope()
+                    val swipeProgress = remember { Animatable(0f) }
+
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f)
+                            .graphicsLayer {
+                                transformOrigin = TransformOrigin(0.5f, 1f)
+                                val scale = (1f + (-swipeProgress.value / 300f)).coerceIn(1f, 1.15f)
+                                scaleX = scale
+                                scaleY = scale
+                            }
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures(
+                                    onDragEnd = {
+                                        scope.launch {
+                                            if (swipeProgress.value < -120f) {
+                                                previewChannel?.let { onChannelClick(it, filteredChannels) }
+                                            } else {
+                                                swipeProgress.animateTo(0f)
+                                            }
+                                        }
+                                    },
+                                    onVerticalDrag = { change, dragAmount ->
+                                        scope.launch {
+                                            swipeProgress.snapTo((swipeProgress.value + dragAmount).coerceIn(-200f, 0f))
+                                        }
+                                    }
+                                )
+                            }
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
@@ -2171,7 +2234,7 @@ fun VideoPlayerScreen(
     var brightness by remember { mutableFloatStateOf(activity?.window?.attributes?.screenBrightness?.takeIf { it >= 0 } ?: 0.5f) }
 
     var isPlaying by remember { mutableStateOf(sharedPlayer.isPlaying) }
-    var showControls by remember { mutableStateOf(true) }
+    var showControls by remember { mutableStateOf(false) }
     var localIsFavorite by remember(currentChannel, isFavorite) { mutableStateOf(isFavorite) }
 
     var showEpgDialog by remember { mutableStateOf(false) }
@@ -2179,19 +2242,17 @@ fun VideoPlayerScreen(
     val currentPlaylist = remember(playlistId) { playlists.find { it.id == playlistId } }
     var epgList by remember { mutableStateOf<List<EpgProgram>>(emptyList()) }
     var isEpgLoading by remember { mutableStateOf(false) }
-    
+
     val volumeInteractionSource = remember { MutableInteractionSource() }
-    val isVolumePressed by volumeInteractionSource.collectIsPressedAsState()
-    val isVolumeDragged by volumeInteractionSource.collectIsDraggedAsState()
-    val isVolumeActive = isVolumePressed || isVolumeDragged
+    var isVolumeActive by remember { mutableStateOf(false) }
 
     val brightnessInteractionSource = remember { MutableInteractionSource() }
-    val isBrightnessPressed by brightnessInteractionSource.collectIsPressedAsState()
-    val isBrightnessDragged by brightnessInteractionSource.collectIsDraggedAsState()
-    val isBrightnessActive = isBrightnessPressed || isBrightnessDragged
+    var isBrightnessActive by remember { mutableStateOf(false) }
 
     var isNativeDialogOpen by remember { mutableStateOf(false) }
     val isAnyDialogOpen = showEpgDialog || isNativeDialogOpen
+
+    val isSliderActive by rememberUpdatedState(isVolumeActive || isBrightnessActive)
 
     LaunchedEffect(showEpgDialog, currentChannel) {
         if (showEpgDialog) {
@@ -2269,14 +2330,109 @@ fun VideoPlayerScreen(
 
     BackHandler(onBack = onBackClick)
 
+    val scope = rememberCoroutineScope()
+    val swipeOffsetY = remember { Animatable(0f) }
+    val zoomAnimatable = remember { Animatable(1f) }
+
+    val transformableState = rememberTransformableState { zoomChange, _, _ ->
+        scope.launch {
+            val minScale = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM) 0.8f else 1f
+            val maxScale = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) 1.25f else 1f
+            zoomAnimatable.snapTo((zoomAnimatable.value * zoomChange).coerceIn(minScale, maxScale))
+        }
+    }
+
+    val isGestureActive = transformableState.isTransformInProgress ||
+            kotlin.math.abs(zoomAnimatable.value - 1f) > 0.01f ||
+            swipeOffsetY.value > 1f
+
+    LaunchedEffect(transformableState.isTransformInProgress) {
+        if (!transformableState.isTransformInProgress) {
+            val finalZoom = zoomAnimatable.value
+
+            if (finalZoom > 1.15f && resizeMode != AspectRatioFrameLayout.RESIZE_MODE_ZOOM) {
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                saveResizeMode(context, resizeMode)
+                zoomAnimatable.snapTo(finalZoom / 1.3f)
+
+            } else if (finalZoom < 0.85f && resizeMode != AspectRatioFrameLayout.RESIZE_MODE_FIT) {
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                saveResizeMode(context, resizeMode)
+                zoomAnimatable.snapTo(finalZoom * 1.3f)
+            }
+
+            zoomAnimatable.animateTo(
+                targetValue = 1f,
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = 300,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing
+                )
+            )
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .transformable(state = transformableState)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    var isSwiping = false
+
+                    val startY = down.position.y
+                    val startX = down.position.x
+
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val activePointers = event.changes.count { it.pressed }
+
+                        if (activePointers > 1 || transformableState.isTransformInProgress || isSliderActive) {
+                            isSwiping = false
+                            scope.launch { swipeOffsetY.animateTo(0f) }
+                            break
+                        }
+
+                        val change = event.changes.firstOrNull { it.pressed }
+                        if (change != null) {
+                            val dragDistanceY = change.position.y - startY
+                            val dragDistanceX = kotlin.math.abs(change.position.x - startX)
+
+                            if (!isSwiping && dragDistanceY > 30f && dragDistanceY > dragDistanceX) {
+                                isSwiping = true
+                            }
+
+                            if (isSwiping) {
+                                val targetOffset = dragDistanceY - 30f
+                                scope.launch { swipeOffsetY.snapTo(targetOffset.coerceIn(0f, 250f)) }
+                                change.consume()
+                            }
+                        }
+                    } while (event.changes.any { it.pressed })
+
+                    if (isSwiping) {
+                        if (swipeOffsetY.value > 120f) {
+                            onBackClick()
+                        } else {
+                            scope.launch { swipeOffsetY.animateTo(0f) }
+                        }
+                    }
+                }
+            }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) { showControls = !showControls }
+            .offset { androidx.compose.ui.unit.IntOffset(0, swipeOffsetY.value.toInt()) }
+            .graphicsLayer {
+                val swipeScale = (1f - (swipeOffsetY.value / 600f)).coerceIn(0.85f, 1f)
+                val finalScale = swipeScale * zoomAnimatable.value
+
+                scaleX = finalScale
+                scaleY = finalScale
+                transformOrigin = TransformOrigin(0.5f, 0.5f)
+            }
+            .background(Color.Black)
     ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -2293,7 +2449,7 @@ fun VideoPlayerScreen(
         )
 
         AnimatedVisibility(
-            visible = showControls,
+            visible = showControls && !isGestureActive,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
@@ -2351,7 +2507,22 @@ fun VideoPlayerScreen(
                 ) {
                     Icon(Icons.Default.BrightnessMedium, contentDescription = "Brightness", tint = Color.White, modifier = Modifier.size(20.dp).alpha(if (isBrightnessActive) 0f else 1f))
                     Spacer(modifier = Modifier.height(8.dp).alpha(if (isBrightnessActive) 0f else 1f))
-                    Box(modifier = Modifier.height(160.dp).width(40.dp), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .height(160.dp)
+                            .width(60.dp)
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    isBrightnessActive = true
+                                    do {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    } while (event.changes.any { it.pressed })
+                                    isBrightnessActive = false
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
                         Slider(
                             value = brightness,
                             onValueChange = {
@@ -2420,7 +2591,22 @@ fun VideoPlayerScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Box(modifier = Modifier.height(160.dp).width(40.dp), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .height(160.dp)
+                            .width(60.dp)
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    isVolumeActive = true
+                                    do {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    } while (event.changes.any { it.pressed })
+                                    isVolumeActive = false
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
                         Slider(
                             value = volume,
                             onValueChange = {
