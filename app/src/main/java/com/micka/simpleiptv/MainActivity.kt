@@ -4,7 +4,6 @@ package com.micka.simpleiptv
 import android.content.Context
 import android.os.Bundle
 import android.os.Build
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -14,6 +13,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.core.content.edit
+import org.json.JSONObject
+import org.json.JSONArray
+import android.widget.Toast
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -21,6 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -52,7 +59,6 @@ import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.text.style.TextOverflow
 import android.util.Log
-import org.json.JSONArray
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -81,7 +87,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.net.toUri
-import androidx.core.content.edit
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -413,7 +418,7 @@ suspend fun fetchXtreamEpg(playlist: Playlist?, channel: Channel?): List<EpgProg
             val apiUrl = "$baseUrl/player_api.php?username=${playlist.username}&password=${playlist.password}&action=get_short_epg&stream_id=$streamId"
 
             val response = URL(apiUrl).readText()
-            val json = org.json.JSONObject(response)
+            val json = JSONObject(response)
             val listings = json.optJSONArray("epg_listings") ?: return@withContext emptyList()
 
             val programs = mutableListOf<EpgProgram>()
@@ -579,7 +584,15 @@ fun AppNavigation() {
                     activePlaylist = playlist
                     setLastOpenedPlaylistId(context, playlist.id)
                     currentScreen = "LOADING"
+                },
+                onSettingsClick = {
+                    currentScreen = "DASHBOARD_SETTINGS"
                 }
+            )
+        }
+        "DASHBOARD_SETTINGS" -> {
+            DashboardSettingsScreen(
+                onBack = { currentScreen = "DASHBOARD" }
             )
         }
         "LOADING" -> {
@@ -669,7 +682,7 @@ fun AppNavigation() {
 // --- DASHBOARD SCREEN ---
 
 @Composable
-fun DashboardScreen(onPlaylistClicked: (Playlist) -> Unit) {
+fun DashboardScreen(onPlaylistClicked: (Playlist) -> Unit, onSettingsClick: () -> Unit) {
     val context = LocalContext.current
     var playlists by remember { mutableStateOf(loadPlaylists(context)) }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -681,12 +694,17 @@ fun DashboardScreen(onPlaylistClicked: (Playlist) -> Unit) {
     Box(modifier = Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xFF1E112A), Color(0xFF0A1020))))) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 8.dp)) {
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(modifier = Modifier.size(28.dp).background(Color.White.copy(alpha = 0.1f), CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Tv, contentDescription = "Logo", tint = Color.Red, modifier = Modifier.size(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(28.dp).background(Color.White.copy(alpha = 0.1f), CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Tv, contentDescription = "Logo", tint = Color.Red, modifier = Modifier.size(14.dp))
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
-                Spacer(modifier = Modifier.width(10.dp))
-                Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                IconButton(onClick = onSettingsClick, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(16.dp))
+                }
             }
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -1759,7 +1777,6 @@ fun SettingsScreen(
     onChangePlaylist: () -> Unit
 ) {
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
     var showCreditsDialog by remember { mutableStateOf(false) }
 
     var catSort by remember { mutableStateOf(getSetting(context, "CAT_SORT", "DEFAULT")) }
@@ -1901,240 +1918,11 @@ fun SettingsScreen(
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
     }
-
     // Credits & Open Source Dialog
     if (showCreditsDialog) {
-        Dialog(onDismissRequest = { showCreditsDialog = false }) {
-            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
-                Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-
-                    Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
-                        Image(
-                            painter = painterResource(id = R.drawable.simple1024),
-                            contentDescription = "App Logo",
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("SimpleIPTV", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        text = "This app is strictly a media player. It does not provide, include, or sell any playlists or streams.",
-                        color = Color.Gray.copy(alpha = 0.8f),
-                        fontSize = 10.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        lineHeight = 14.sp
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "SimpleIPTV is free and open-source.",
-                        color = Color(0xFFE91E63).copy(alpha = 0.9f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        lineHeight = 14.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Button(
-                        onClick = { uriHandler.openUri("https://github.com/mikailakar/SimpleIPTV") },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.05f)),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().height(40.dp)
-                    ) {
-                        Icon(Icons.Default.Code, contentDescription = "GitHub", tint = Color.White, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("View Source Code", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        text = "Close",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Gray,
-                        modifier = Modifier.clickable { showCreditsDialog = false }.padding(8.dp)
-                    )
-                }
-            }
-        }
+        CreditsDialog(onDismiss = { showCreditsDialog = false })
     }
 
-    @Composable
-    fun <T> ReorderDialog(title: String, items: List<T>, itemLabel: (T) -> String, onDismiss: () -> Unit, onSave: (List<T>) -> Unit) {
-        var currentList by remember { mutableStateOf(items) }
-        var selectedItems by remember { mutableStateOf(setOf<T>()) }
-
-        val listState = rememberLazyListState()
-        val coroutineScope = rememberCoroutineScope()
-
-        fun scrollToSelection() {
-            coroutineScope.launch {
-                val firstSelectedIndex = currentList.indexOfFirst { it in selectedItems }
-                if (firstSelectedIndex != -1) {
-                    listState.animateScrollToItem((firstSelectedIndex - 2).coerceAtLeast(0))
-                }
-            }
-        }
-
-        fun moveSelectedUp() {
-            val indices = currentList.mapIndexedNotNull { i, item -> if (item in selectedItems) i else null }
-            if (indices.isNotEmpty() && indices.first() > 0) {
-                val newList = currentList.toMutableList()
-                for (i in indices) Collections.swap(newList, i, i - 1)
-                currentList = newList
-                scrollToSelection()
-            }
-        }
-
-        fun moveSelectedDown() {
-            val indices = currentList.mapIndexedNotNull { i, item -> if (item in selectedItems) i else null }
-            if (indices.isNotEmpty() && indices.last() < currentList.size - 1) {
-                val newList = currentList.toMutableList()
-                for (i in indices.reversed()) Collections.swap(newList, i, i + 1)
-                currentList = newList
-                scrollToSelection()
-            }
-        }
-
-        fun moveSelectedTop() {
-            val sel = currentList.filter { it in selectedItems }
-            val unsel = currentList.filter { it !in selectedItems }
-            currentList = sel + unsel
-            scrollToSelection()
-        }
-
-        fun moveSelectedBottom() {
-            val sel = currentList.filter { it in selectedItems }
-            val unsel = currentList.filter { it !in selectedItems }
-            currentList = unsel + sel
-            scrollToSelection()
-        }
-
-        val targetIndices = currentList.mapIndexedNotNull { i, t -> if (t in selectedItems) i else null }
-        val canMoveUp = targetIndices.isNotEmpty() && targetIndices.first() > 0
-        val canMoveDown = targetIndices.isNotEmpty() && targetIndices.last() < currentList.size - 1
-
-        Dialog(onDismissRequest = onDismiss) {
-            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
-                Column(modifier = Modifier.padding(16.dp)) {
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "Cancel",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.Gray,
-                                modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
-                            )
-                            Text(
-                                "Save",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFE91E63),
-                                modifier = Modifier.clickable { onSave(currentList); onDismiss() }.padding(4.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp))
-                            .padding(4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            IconButton(
-                                onClick = { moveSelectedTop() },
-                                enabled = canMoveUp,
-                                modifier = Modifier.size(32.dp)
-                            ) { Icon(Icons.Default.VerticalAlignTop, null, tint = if (canMoveUp) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
-
-                            IconButton(
-                                onClick = { moveSelectedUp() },
-                                enabled = canMoveUp,
-                                modifier = Modifier.size(32.dp)
-                            ) { Icon(Icons.Default.KeyboardArrowUp, null, tint = if (canMoveUp) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
-
-                            IconButton(
-                                onClick = { moveSelectedDown() },
-                                enabled = canMoveDown,
-                                modifier = Modifier.size(32.dp)
-                            ) { Icon(Icons.Default.KeyboardArrowDown, null, tint = if (canMoveDown) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
-
-                            IconButton(
-                                onClick = { moveSelectedBottom() },
-                                enabled = canMoveDown,
-                                modifier = Modifier.size(32.dp)
-                            ) { Icon(Icons.Default.VerticalAlignBottom, null, tint = if (canMoveDown) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
-                        }
-
-                        if (selectedItems.isNotEmpty()) {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
-                                Text("${selectedItems.size} selected", fontSize = 10.sp, color = Color(0xFFFACC15))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    "CLEAR",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White.copy(alpha = 0.6f),
-                                    modifier = Modifier.clickable { selectedItems = emptySet() }.padding(4.dp)
-                                )
-                            }
-                        } else {
-                            Text("Select to move", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(end = 8.dp))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    LazyColumn(state = listState, modifier = Modifier.heightIn(max = 350.dp)) {
-                        items(currentList.size) { index ->
-                            val item = currentList[index]
-                            val isSelected = item in selectedItems
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        selectedItems = if (isSelected) selectedItems - item else selectedItems + item
-                                    }
-                                    .background(if (isSelected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
-                                    .padding(vertical = 8.dp, horizontal = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = isSelected,
-                                    onCheckedChange = null,
-                                    colors = CheckboxDefaults.colors(checkedColor = Color(0xFFE91E63), uncheckedColor = Color.Gray),
-                                    modifier = Modifier.scale(0.8f)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(itemLabel(item), fontSize = 12.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     if (showCatReorderDialog) {
         val savedOrder = getCustomCategoryOrder(context)
@@ -2955,3 +2743,558 @@ fun DarkTextField(
         )
     }
 }
+
+@Composable
+fun CreditsDialog(onDismiss: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
+            Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+
+                Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                    Image(
+                        painter = painterResource(id = R.drawable.simple1024),
+                        contentDescription = "App Logo",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("SimpleIPTV", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "This app is strictly a media player. It does not provide, include, or sell any playlists or streams.",
+                    color = Color.Gray.copy(alpha = 0.8f),
+                    fontSize = 10.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    lineHeight = 14.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "SimpleIPTV is free and open-source.",
+                    color = Color(0xFFE91E63).copy(alpha = 0.9f),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    lineHeight = 14.sp
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = { uriHandler.openUri("https://github.com/mikailakar/SimpleIPTV") },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.05f)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                ) {
+                    Icon(Icons.Default.Code, contentDescription = "GitHub", tint = Color.White, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("View Source Code", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Close",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Gray,
+                    modifier = Modifier.clickable { onDismiss() }.padding(8.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaylistSelectionDialog(title: String, playlists: List<Playlist>, onDismiss: () -> Unit, onSelect: (Playlist) -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
+            Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(modifier = Modifier.height(12.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    items(playlists) { playlist ->
+                        Text(
+                            text = playlist.name,
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            modifier = Modifier.fillMaxWidth().clickable { onSelect(playlist) }.padding(vertical = 12.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE91E63), modifier = Modifier.clickable { onDismiss() }.padding(4.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaylistMultiSelectionDialog(title: String, playlists: List<Playlist>, confirmText: String, onDismiss: () -> Unit, onConfirm: (List<Playlist>) -> Unit) {
+    var selectedItems by remember { mutableStateOf(setOf<Playlist>()) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
+            Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(modifier = Modifier.height(12.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    items(playlists) { playlist ->
+                        val isSelected = selectedItems.contains(playlist)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                selectedItems = if (isSelected) selectedItems - playlist else selectedItems + playlist
+                            }.padding(vertical = 8.dp)
+                        ) {
+                            Checkbox(
+                                checked = isSelected, 
+                                onCheckedChange = { checked ->
+                                    selectedItems = if (checked) selectedItems + playlist else selectedItems - playlist
+                                },
+                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFFE91E63), uncheckedColor = Color.Gray)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(text = playlist.name, color = Color.White, fontSize = 12.sp)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.clickable { onDismiss() }.padding(8.dp))
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(confirmText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE91E63), modifier = Modifier.clickable { onConfirm(selectedItems.toList()) }.padding(8.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DashboardSettingsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var playlists by remember { mutableStateOf(loadPlaylists(context)) }
+    LaunchedEffect(playlists) { savePlaylists(context, playlists) }
+
+    var showCreditsDialog by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var showEditSelectionDialog by remember { mutableStateOf(false) }
+    var showRemoveSelectionDialog by remember { mutableStateOf(false) }
+    var showReorderDialog by remember { mutableStateOf(false) }
+    var showSaveSelectionDialog by remember { mutableStateOf(false) }
+    var editingPlaylist by remember { mutableStateOf<Playlist?>(null) }
+    var pendingLoadPlaylists by remember { mutableStateOf<List<Pair<Playlist, JSONObject>>?>(null) }
+    
+    val loadLauncher = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            try {
+                context.contentResolver.openInputStream(it)?.use { inputStream ->
+                    val jsonString = inputStream.bufferedReader().use { reader -> reader.readText() }
+                    val jsonArray = JSONArray(jsonString)
+                    val loaded = mutableListOf<Pair<Playlist, JSONObject>>()
+                    for (i in 0 until jsonArray.length()) {
+                        val obj = jsonArray.getJSONObject(i)
+                        val playlistId = obj.getString("id")
+                        val playlist = Playlist(
+                            id = playlistId,
+                            name = obj.getString("name"),
+                            type = obj.getString("type"),
+                            url = obj.getString("url"),
+                            username = obj.getString("username"),
+                            password = obj.getString("password")
+                        )
+                        loaded.add(playlist to obj)
+                    }
+                    pendingLoadPlaylists = loaded
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(context, "Failed to load playlists", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    var playlistsToSave by remember { mutableStateOf<List<Playlist>>(emptyList()) }
+    val saveLauncher = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let {
+            try {
+                context.contentResolver.openOutputStream(it)?.use { outputStream ->
+                    val jsonArray = JSONArray()
+                    playlistsToSave.forEach { playlist ->
+                        val obj = JSONObject()
+                        obj.put("id", playlist.id)
+                        obj.put("name", playlist.name)
+                        obj.put("type", playlist.type)
+                        obj.put("url", playlist.url)
+                        obj.put("username", playlist.username)
+                        obj.put("password", playlist.password)
+                        
+                        val prefs = context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE)
+                        obj.put("lastCategory", prefs.getString("LAST_CAT_${playlist.id}", "ALL"))
+                        obj.put("lastChannel", prefs.getString("LAST_CHAN_${playlist.id}", null) ?: JSONObject.NULL)
+                        
+                        val favs = loadFavorites(context, playlist.id)
+                        val favsArray = JSONArray()
+                        favs.forEach { fav -> favsArray.put(fav) }
+                        obj.put("favorites", favsArray)
+                        
+                        jsonArray.put(obj)
+                    }
+                    outputStream.write(jsonArray.toString(4).toByteArray())
+                    Toast.makeText(context, "Saved ${playlistsToSave.size} playlists", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(context, "Failed to save playlists", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    BackHandler(onBack = onBack)
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Color(0xFF070B14)).padding(20.dp).verticalScroll(rememberScrollState())
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(16.dp))
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Dashboard Settings", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { editingPlaylist = null; showAddDialog = true }.padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Add Playlist", color = Color.White, fontSize = 12.sp)
+            Icon(Icons.Default.Add, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { showEditSelectionDialog = true }.padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Edit Playlist", color = Color.White, fontSize = 12.sp)
+            Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { showReorderDialog = true }.padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Reorder Playlists", color = Color.White, fontSize = 12.sp)
+            Text("EDIT", color = Color.Gray, fontSize = 10.sp)
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+        
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { showRemoveSelectionDialog = true }.padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Remove Playlists", color = Color.White, fontSize = 12.sp)
+            Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+        
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { showSaveSelectionDialog = true }.padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Save Playlists", color = Color.White, fontSize = 12.sp)
+            Icon(Icons.Default.Save, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+        
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { loadLauncher.launch(arrayOf("application/json", "*/*")) }.padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Load Playlists", color = Color.White, fontSize = 12.sp)
+            Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { showCreditsDialog = true }.padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Credits", color = Color.White, fontSize = 12.sp)
+            Icon(Icons.Default.Code, contentDescription = "Credits", tint = Color.Gray, modifier = Modifier.size(16.dp))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+    }
+    
+    if (showAddDialog) {
+        AddPlaylistDialog(
+            initialPlaylist = editingPlaylist,
+            onDismiss = { showAddDialog = false; editingPlaylist = null },
+            onSave = { savedPlaylist ->
+                playlists = if (editingPlaylist == null) playlists + savedPlaylist else playlists.map { if (it.id == savedPlaylist.id) savedPlaylist else it }
+                showAddDialog = false; editingPlaylist = null
+            }
+        )
+    }
+    
+    if (showEditSelectionDialog) {
+        PlaylistSelectionDialog(title = "Select Playlist to Edit", playlists = playlists, onDismiss = { showEditSelectionDialog = false }) { selected ->
+            editingPlaylist = selected
+            showEditSelectionDialog = false
+            showAddDialog = true
+        }
+    }
+    
+    if (showRemoveSelectionDialog) {
+        PlaylistMultiSelectionDialog(title = "Select Playlists to Remove", playlists = playlists, confirmText = "Remove", onDismiss = { showRemoveSelectionDialog = false }) { selected ->
+            playlists = playlists.filter { it !in selected }
+            showRemoveSelectionDialog = false
+        }
+    }
+    
+    if (showSaveSelectionDialog) {
+        PlaylistMultiSelectionDialog(title = "Select Playlists to Save", playlists = playlists, confirmText = "Save", onDismiss = { showSaveSelectionDialog = false }) { selected ->
+            playlistsToSave = selected
+            showSaveSelectionDialog = false
+            saveLauncher.launch("playlists.json")
+        }
+    }
+    
+    if (showReorderDialog) {
+        ReorderDialog(title = "Reorder Playlists", items = playlists, itemLabel = { it.name }, onDismiss = { showReorderDialog = false }) { newOrder ->
+            playlists = newOrder
+            showReorderDialog = false
+        }
+    }
+
+    if (showCreditsDialog) {
+        CreditsDialog(onDismiss = { showCreditsDialog = false })
+    }
+
+    if (pendingLoadPlaylists != null) {
+        PlaylistMultiSelectionDialog(
+            title = "Select Playlists to Load",
+            playlists = pendingLoadPlaylists!!.map { it.first },
+            confirmText = "Load",
+            onDismiss = { pendingLoadPlaylists = null }
+        ) { selectedPlaylists ->
+            val existingIds = playlists.map { p -> p.id }.toMutableSet()
+            val newPlaylists = mutableListOf<Playlist>()
+            
+            selectedPlaylists.forEach { selected ->
+                val pair = pendingLoadPlaylists!!.find { it.first.id == selected.id }
+                if (pair != null) {
+                    val obj = pair.second
+                    var playlistId = selected.id
+                    if (existingIds.contains(playlistId)) {
+                        playlistId = UUID.randomUUID().toString()
+                    }
+                    existingIds.add(playlistId)
+                    
+                    val newPlaylist = selected.copy(id = playlistId)
+                    newPlaylists.add(newPlaylist)
+                    
+                    if (obj.has("lastCategory")) {
+                        context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit {
+                            putString("LAST_CAT_$playlistId", obj.getString("lastCategory"))
+                        }
+                    }
+                    if (obj.has("lastChannel") && !obj.isNull("lastChannel")) {
+                        context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit {
+                            putString("LAST_CHAN_$playlistId", obj.getString("lastChannel"))
+                        }
+                    }
+                    if (obj.has("favorites")) {
+                        val favsArray = obj.getJSONArray("favorites")
+                        val favsList = mutableListOf<String>()
+                        for (j in 0 until favsArray.length()) {
+                            favsList.add(favsArray.getString(j))
+                        }
+                        saveFavorites(context, playlistId, favsList)
+                    }
+                }
+            }
+            
+            playlists = playlists + newPlaylists
+            Toast.makeText(context, "Loaded ${newPlaylists.size} playlists", Toast.LENGTH_SHORT).show()
+            pendingLoadPlaylists = null
+        }
+    }
+}
+    @Composable
+    fun <T> ReorderDialog(title: String, items: List<T>, itemLabel: (T) -> String, onDismiss: () -> Unit, onSave: (List<T>) -> Unit) {
+        var currentList by remember { mutableStateOf(items) }
+        var selectedItems by remember { mutableStateOf(setOf<T>()) }
+
+        val listState = rememberLazyListState()
+        val coroutineScope = rememberCoroutineScope()
+
+        fun scrollToSelection() {
+            coroutineScope.launch {
+                val firstSelectedIndex = currentList.indexOfFirst { it in selectedItems }
+                if (firstSelectedIndex != -1) {
+                    listState.animateScrollToItem((firstSelectedIndex - 2).coerceAtLeast(0))
+                }
+            }
+        }
+
+        fun moveSelectedUp() {
+            val indices = currentList.mapIndexedNotNull { i, item -> if (item in selectedItems) i else null }
+            if (indices.isNotEmpty() && indices.first() > 0) {
+                val newList = currentList.toMutableList()
+                for (i in indices) Collections.swap(newList, i, i - 1)
+                currentList = newList
+                scrollToSelection()
+            }
+        }
+
+        fun moveSelectedDown() {
+            val indices = currentList.mapIndexedNotNull { i, item -> if (item in selectedItems) i else null }
+            if (indices.isNotEmpty() && indices.last() < currentList.size - 1) {
+                val newList = currentList.toMutableList()
+                for (i in indices.reversed()) Collections.swap(newList, i, i + 1)
+                currentList = newList
+                scrollToSelection()
+            }
+        }
+
+        fun moveSelectedTop() {
+            val sel = currentList.filter { it in selectedItems }
+            val unsel = currentList.filter { it !in selectedItems }
+            currentList = sel + unsel
+            scrollToSelection()
+        }
+
+        fun moveSelectedBottom() {
+            val sel = currentList.filter { it in selectedItems }
+            val unsel = currentList.filter { it !in selectedItems }
+            currentList = unsel + sel
+            scrollToSelection()
+        }
+
+        val targetIndices = currentList.mapIndexedNotNull { i, t -> if (t in selectedItems) i else null }
+        val canMoveUp = targetIndices.isNotEmpty() && targetIndices.first() > 0
+        val canMoveDown = targetIndices.isNotEmpty() && targetIndices.last() < currentList.size - 1
+
+        Dialog(onDismissRequest = onDismiss) {
+            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Cancel",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Gray,
+                                modifier = Modifier.clickable { onDismiss() }.padding(4.dp)
+                            )
+                            Text(
+                                "Save",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFE91E63),
+                                modifier = Modifier.clickable { onSave(currentList); onDismiss() }.padding(4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            IconButton(
+                                onClick = { moveSelectedTop() },
+                                enabled = canMoveUp,
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.VerticalAlignTop, null, tint = if (canMoveUp) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
+
+                            IconButton(
+                                onClick = { moveSelectedUp() },
+                                enabled = canMoveUp,
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.KeyboardArrowUp, null, tint = if (canMoveUp) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
+
+                            IconButton(
+                                onClick = { moveSelectedDown() },
+                                enabled = canMoveDown,
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.KeyboardArrowDown, null, tint = if (canMoveDown) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
+
+                            IconButton(
+                                onClick = { moveSelectedBottom() },
+                                enabled = canMoveDown,
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.VerticalAlignBottom, null, tint = if (canMoveDown) Color.White else Color.White.copy(alpha = 0.2f), modifier = Modifier.size(18.dp)) }
+                        }
+
+                        if (selectedItems.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 4.dp)) {
+                                Text("${selectedItems.size} selected", fontSize = 10.sp, color = Color(0xFFFACC15))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "CLEAR",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    modifier = Modifier.clickable { selectedItems = emptySet() }.padding(4.dp)
+                                )
+                            }
+                        } else {
+                            Text("Select to move", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(end = 8.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    LazyColumn(state = listState, modifier = Modifier.heightIn(max = 350.dp)) {
+                        items(currentList.size) { index ->
+                            val item = currentList[index]
+                            val isSelected = item in selectedItems
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedItems = if (isSelected) selectedItems - item else selectedItems + item
+                                    }
+                                    .background(if (isSelected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
+                                    .padding(vertical = 8.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isSelected,
+                                    onCheckedChange = null,
+                                    colors = CheckboxDefaults.colors(checkedColor = Color(0xFFE91E63), uncheckedColor = Color.Gray),
+                                    modifier = Modifier.scale(0.8f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(itemLabel(item), fontSize = 12.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
