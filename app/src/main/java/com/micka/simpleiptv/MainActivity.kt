@@ -232,14 +232,22 @@ fun saveResizeMode(context: Context, mode: Int) {
         .edit { putInt("RESIZE_MODE", mode) }
 }
 
-fun getCustomCategoryOrder(context: Context): List<String> {
-    val str = context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).getString("CUSTOM_CAT_ORDER", "") ?: ""
+fun getCustomCategoryOrder(context: Context, playlistId: String): List<String> {
+    val prefs = context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE)
+    val key = "CUSTOM_CAT_ORDER_$playlistId"
+    val str = if (prefs.contains(key)) {
+        prefs.getString(key, "") ?: ""
+    } else {
+        val global = prefs.getString("CUSTOM_CAT_ORDER", "") ?: ""
+        prefs.edit { putString(key, global) }
+        global
+    }
     return if (str.isEmpty()) emptyList() else str.split("|||")
 }
 
-fun saveCustomCategoryOrder(context: Context, order: List<String>) {
+fun saveCustomCategoryOrder(context: Context, playlistId: String, order: List<String>) {
     context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit {
-        putString("CUSTOM_CAT_ORDER", order.joinToString("|||"))
+        putString("CUSTOM_CAT_ORDER_$playlistId", order.joinToString("|||"))
     }
 }
 
@@ -251,23 +259,55 @@ fun saveSetting(context: Context, key: String, value: String) {
     context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit { putString(key, value) }
 }
 
-fun getHiddenCategories(context: Context): Set<String> {
-    return context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).getStringSet("HIDDEN_CATS", emptySet()) ?: emptySet()
-}
-
-fun saveHiddenCategories(context: Context, hidden: Set<String>) {
-    context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit {
-        putStringSet("HIDDEN_CATS", hidden)
+fun getPlaylistSetting(context: Context, playlistId: String, key: String, default: String): String {
+    val prefs = context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE)
+    val playlistKey = "${key}_$playlistId"
+    if (prefs.contains(playlistKey)) {
+        return prefs.getString(playlistKey, default) ?: default
+    } else {
+        val globalVal = prefs.getString(key, default) ?: default
+        prefs.edit { putString(playlistKey, globalVal) }
+        return globalVal
     }
 }
 
-fun getUpdateInterval(context: Context): Long {
-    return context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).getLong("UPDATE_INTERVAL", 86400000L)
+fun savePlaylistSetting(context: Context, playlistId: String, key: String, value: String) {
+    context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit { putString("${key}_$playlistId", value) }
 }
 
-fun saveUpdateInterval(context: Context, ms: Long) {
+fun getHiddenCategories(context: Context, playlistId: String): Set<String> {
+    val prefs = context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE)
+    val key = "HIDDEN_CATS_$playlistId"
+    if (prefs.contains(key)) {
+        return prefs.getStringSet(key, emptySet()) ?: emptySet()
+    } else {
+        val global = prefs.getStringSet("HIDDEN_CATS", emptySet()) ?: emptySet()
+        prefs.edit { putStringSet(key, global) }
+        return global
+    }
+}
+
+fun saveHiddenCategories(context: Context, playlistId: String, hidden: Set<String>) {
     context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit {
-        putLong("UPDATE_INTERVAL", ms)
+        putStringSet("HIDDEN_CATS_$playlistId", hidden)
+    }
+}
+
+fun getUpdateInterval(context: Context, playlistId: String): Long {
+    val prefs = context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE)
+    val key = "UPDATE_INTERVAL_$playlistId"
+    if (prefs.contains(key)) {
+        return prefs.getLong(key, 86400000L)
+    } else {
+        val global = prefs.getLong("UPDATE_INTERVAL", 86400000L)
+        prefs.edit { putLong(key, global) }
+        return global
+    }
+}
+
+fun saveUpdateInterval(context: Context, playlistId: String, ms: Long) {
+    context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit {
+        putLong("UPDATE_INTERVAL_$playlistId", ms)
     }
 }
 
@@ -577,6 +617,21 @@ fun AppNavigation() {
     var selectedChannel by remember { mutableStateOf<Channel?>(null) }
     var currentPlaybackQueue by remember { mutableStateOf<List<Channel>>(emptyList()) }
 
+    val hideAdultContent = getSetting(context, "HIDE_ADULT_CONTENT", "true").toBoolean()
+    val adultKeywords = remember { listOf("xxx", "adult", "18+", "porn", "x-rated", "nsfw", "for adults") }
+    
+    val safeChannels = remember(activeChannels, hideAdultContent) {
+        if (hideAdultContent) {
+            activeChannels.filter { channel ->
+                val catLower = channel.category.lowercase()
+                val nameLower = channel.name.lowercase()
+                !adultKeywords.any { catLower.contains(it) || nameLower.contains(it) }
+            }
+        } else {
+            activeChannels
+        }
+    }
+
     when (currentScreen) {
         "DASHBOARD" -> {
             DashboardScreen(
@@ -611,7 +666,7 @@ fun AppNavigation() {
         "CHANNELS" -> {
             ChannelListScreen(
                 playlistId = activePlaylist?.id ?: "default",
-                channels = activeChannels,
+                channels = safeChannels,
                 sharedPlayer = sharedPlayer,
                 onChannelClick = { channel, queue ->
                     selectedChannel = channel
@@ -667,7 +722,7 @@ fun AppNavigation() {
         "SETTINGS" -> {
             SettingsScreen(
                 playlistId = activePlaylist?.id ?: "default",
-                channels = activeChannels,
+                channels = safeChannels,
                 onBack = { currentScreen = "CHANNELS" },
                 onChangePlaylist = {
                     setLastOpenedPlaylistId(context, null)
@@ -844,8 +899,10 @@ fun PlaylistCircleItem(name: String, onClick: () -> Unit, onEdit: () -> Unit, on
             color = Color.White,
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            maxLines = 2,
+            minLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
 }
@@ -915,6 +972,8 @@ fun LoadingScreen(playlist: Playlist, onLoaded: (List<Channel>) -> Unit, onError
 
                     if (finalChannels.isEmpty()) throw Exception("No channels found")
 
+
+
                     withContext(Dispatchers.Main) {
                         onLoaded(finalChannels)
                     }
@@ -955,10 +1014,10 @@ fun ChannelListScreen(
 
     var favoriteIds by remember { mutableStateOf(loadFavorites(context, playlistId)) }
 
-    val catSort = getSetting(context, "CAT_SORT", "DEFAULT")
-    val chanSort = getSetting(context, "CHAN_SORT", "DEFAULT")
-    val bgColorSetting = getSetting(context, "BG_COLOR", "DARK")
-    val hiddenCats = getHiddenCategories(context)
+    val catSort = getPlaylistSetting(context, playlistId, "CAT_SORT", "DEFAULT")
+    val chanSort = getPlaylistSetting(context, playlistId, "CHAN_SORT", "DEFAULT")
+    val bgColorSetting = getSetting(context, "BG_COLOR", "DARK") // Global setting
+    val hiddenCats = getHiddenCategories(context, playlistId)
 
     val rootBgColor = if (bgColorSetting == "BLACK") Color.Black else Color(0xFF070B14)
 
@@ -1082,7 +1141,7 @@ fun ChannelListScreen(
         }
     }
 
-    val customCatOrder = remember(catSort) { getCustomCategoryOrder(context) }
+    val customCatOrder = remember(catSort) { getCustomCategoryOrder(context, playlistId) }
 
     val categories = remember(channels, hiddenCats, catSort, customCatOrder) {
         val baseCats = channels.map { it.category }.distinct().filter { !hiddenCats.contains(it) }
@@ -1770,6 +1829,72 @@ fun DarkSearchField(value: String, placeholder: String, onValueChange: (String) 
 // --- SETTINGS SCREEN ---
 
 @Composable
+fun SettingRow(title: String, currentLabel: String, options: List<Pair<String, Any>>, onSelect: (Any) -> Unit) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { showDialog = true }.padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, color = Color.White, fontSize = 12.sp)
+        Text(currentLabel, color = Color.Gray, fontSize = 10.sp)
+    }
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+
+    if (showDialog) {
+        Dialog(onDismissRequest = { showDialog = false }) {
+            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    options.forEach { (label, data) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { onSelect(data); showDialog = false }.height(36.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = (currentLabel == label), onClick = { onSelect(data); showDialog = false })
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(label, fontSize = 12.sp, color = Color.White)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE91E63), modifier = Modifier.clickable { showDialog = false }.padding(4.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ToggleRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, color = Color.White, fontSize = 12.sp)
+        Box(
+            modifier = Modifier.requiredHeight(14.dp).wrapContentWidth(unbounded = true).offset(x = 10.dp),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            Switch(
+                checked = checked, 
+                onCheckedChange = onCheckedChange,
+                modifier = Modifier.scale(0.65f),
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White, 
+                    checkedTrackColor = Color(0xFFE91E63),
+                    uncheckedThumbColor = Color.Gray,
+                    uncheckedTrackColor = Color(0xFF333A47)
+                )
+            )
+        }
+    }
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+}
+
+@Composable
 fun SettingsScreen(
     playlistId: String,
     channels: List<Channel>,
@@ -1779,14 +1904,15 @@ fun SettingsScreen(
     val context = LocalContext.current
     var showCreditsDialog by remember { mutableStateOf(false) }
 
-    var catSort by remember { mutableStateOf(getSetting(context, "CAT_SORT", "DEFAULT")) }
-    var chanSort by remember { mutableStateOf(getSetting(context, "CHAN_SORT", "DEFAULT")) }
-    var updateInterval by remember { mutableLongStateOf(getUpdateInterval(context)) }
+    var catSort by remember { mutableStateOf(getPlaylistSetting(context, playlistId, "CAT_SORT", "DEFAULT")) }
+    var chanSort by remember { mutableStateOf(getPlaylistSetting(context, playlistId, "CHAN_SORT", "DEFAULT")) }
+    var updateInterval by remember { mutableLongStateOf(getUpdateInterval(context, playlistId)) }
 
     var bgColorSetting by remember { mutableStateOf(getSetting(context, "BG_COLOR", "DARK")) }
+    var hideAdultContent by remember { mutableStateOf(getSetting(context, "HIDE_ADULT_CONTENT", "true").toBoolean()) }
 
     var showHideDialog by remember { mutableStateOf(false) }
-    var hiddenCats by remember { mutableStateOf(getHiddenCategories(context)) }
+    var hiddenCats by remember { mutableStateOf(getHiddenCategories(context, playlistId)) }
 
     var showCatReorderDialog by remember { mutableStateOf(false) }
     var showFavReorderDialog by remember { mutableStateOf(false) }
@@ -1811,44 +1937,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        @Composable
-        fun SettingRow(title: String, currentLabel: String, options: List<Pair<String, Any>>, onSelect: (Any) -> Unit) {
-            var showDialog by remember { mutableStateOf(false) }
 
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable { showDialog = true }.padding(vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(title, color = Color.White, fontSize = 12.sp)
-                Text(currentLabel, color = Color.Gray, fontSize = 10.sp)
-            }
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
-
-            if (showDialog) {
-                Dialog(onDismissRequest = { showDialog = false }) {
-                    Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1E1E2A)) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            options.forEach { (label, data) ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().clickable { onSelect(data); showDialog = false }.height(36.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    RadioButton(selected = (currentLabel == label), onClick = { onSelect(data); showDialog = false })
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(label, fontSize = 12.sp, color = Color.White)
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE91E63), modifier = Modifier.clickable { showDialog = false }.padding(4.dp))
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         Row(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onChangePlaylist).padding(vertical = 12.dp),
@@ -1861,7 +1950,7 @@ fun SettingsScreen(
 
         SettingRow("Category Sorting", currentLabel = catSort, options = listOf("DEFAULT" to "DEFAULT", "A-Z" to "A-Z", "Z-A" to "Z-A", "CUSTOM" to "CUSTOM")) { sort ->
             catSort = sort as String
-            saveSetting(context, "CAT_SORT", sort)
+            savePlaylistSetting(context, playlistId, "CAT_SORT", sort)
             if (sort == "CUSTOM") showCatReorderDialog = true
         }
 
@@ -1878,7 +1967,7 @@ fun SettingsScreen(
         }
 
         SettingRow("Live Channel Sorting", currentLabel = chanSort, options = listOf("DEFAULT" to "DEFAULT", "A-Z" to "A-Z", "Z-A" to "Z-A")) { sort ->
-            chanSort = sort as String; saveSetting(context, "CHAN_SORT", sort)
+            chanSort = sort as String; savePlaylistSetting(context, playlistId, "CHAN_SORT", sort)
         }
 
         Row(
@@ -1901,7 +1990,7 @@ fun SettingsScreen(
 
         val intervalLabel = when(updateInterval) { 0L -> "Everytime" ; 3600000L -> "Every Hour" ; 172800000L -> "Every 2 Days" ; else -> "Everyday" }
         SettingRow("Update Playlist Time", currentLabel = intervalLabel, options = listOf("Everytime" to 0L, "Every Hour" to 3600000L, "Everyday" to 86400000L, "Every 2 Days" to 172800000L)) { ms ->
-            updateInterval = ms as Long; saveUpdateInterval(context, ms)
+            updateInterval = ms as Long; saveUpdateInterval(context, playlistId, ms)
         }
 
         SettingRow("Background Color", currentLabel = bgColorSetting, options = listOf("DARK" to "DARK", "BLACK" to "BLACK")) { color ->
@@ -1909,6 +1998,11 @@ fun SettingsScreen(
             saveSetting(context, "BG_COLOR", color)
         }
 
+        ToggleRow("Hide Adult Content", hideAdultContent) { checked ->
+            hideAdultContent = checked
+            saveSetting(context, "HIDE_ADULT_CONTENT", checked.toString())
+        }
+        
         Row(
             modifier = Modifier.fillMaxWidth().clickable { showCreditsDialog = true }.padding(vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
@@ -1925,11 +2019,11 @@ fun SettingsScreen(
 
 
     if (showCatReorderDialog) {
-        val savedOrder = getCustomCategoryOrder(context)
+        val savedOrder = getCustomCategoryOrder(context, playlistId)
         val initialList = savedOrder.filter { allCategories.contains(it) } + allCategories.filter { !savedOrder.contains(it) }
 
         ReorderDialog(title = "Reorder Categories", items = initialList, itemLabel = { it }, onDismiss = { showCatReorderDialog = false }) { newList ->
-            saveCustomCategoryOrder(context, newList)
+            saveCustomCategoryOrder(context, playlistId, newList)
         }
     }
 
@@ -1958,7 +2052,7 @@ fun SettingsScreen(
                                 modifier = Modifier.fillMaxWidth().clickable {
                                     val newSet = if (isHidden) hiddenCats - cat else hiddenCats + cat
                                     hiddenCats = newSet
-                                    saveHiddenCategories(context, newSet)
+                                    saveHiddenCategories(context, playlistId, newSet)
                                 }.height(36.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -2889,6 +2983,8 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
     var showSaveSelectionDialog by remember { mutableStateOf(false) }
     var editingPlaylist by remember { mutableStateOf<Playlist?>(null) }
     var pendingLoadPlaylists by remember { mutableStateOf<List<Pair<Playlist, JSONObject>>?>(null) }
+    var bgColorSetting by remember { mutableStateOf(getSetting(context, "BG_COLOR", "DARK")) }
+    var hideAdultContent by remember { mutableStateOf(getSetting(context, "HIDE_ADULT_CONTENT", "true").toBoolean()) }
     
     val loadLauncher = rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
@@ -2937,6 +3033,22 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
                         val prefs = context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE)
                         obj.put("lastCategory", prefs.getString("LAST_CAT_${playlist.id}", "ALL"))
                         obj.put("lastChannel", prefs.getString("LAST_CHAN_${playlist.id}", null) ?: JSONObject.NULL)
+                        
+                        
+                        obj.put("catSort", getPlaylistSetting(context, playlist.id, "CAT_SORT", "DEFAULT"))
+                        obj.put("chanSort", getPlaylistSetting(context, playlist.id, "CHAN_SORT", "DEFAULT"))
+                        
+                        val customCatOrderList = getCustomCategoryOrder(context, playlist.id)
+                        val customCatOrderArray = JSONArray()
+                        customCatOrderList.forEach { item -> customCatOrderArray.put(item) }
+                        obj.put("customCatOrder", customCatOrderArray)
+                        
+                        val hiddenCatsSet = getHiddenCategories(context, playlist.id)
+                        val hiddenCatsArray = JSONArray()
+                        hiddenCatsSet.forEach { item -> hiddenCatsArray.put(item) }
+                        obj.put("hiddenCats", hiddenCatsArray)
+                        
+                        obj.put("updateInterval", getUpdateInterval(context, playlist.id))
                         
                         val favs = loadFavorites(context, playlist.id)
                         val favsArray = JSONArray()
@@ -3024,6 +3136,16 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
 
+        SettingRow("Background Color", currentLabel = bgColorSetting, options = listOf("DARK" to "DARK", "BLACK" to "BLACK")) { color ->
+            bgColorSetting = color as String
+            saveSetting(context, "BG_COLOR", color)
+        }
+        
+        ToggleRow("Hide Adult Content", hideAdultContent) { checked ->
+            hideAdultContent = checked
+            saveSetting(context, "HIDE_ADULT_CONTENT", checked.toString())
+        }
+        
         Row(
             modifier = Modifier.fillMaxWidth().clickable { showCreditsDialog = true }.padding(vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
@@ -3119,6 +3241,28 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
                             favsList.add(favsArray.getString(j))
                         }
                         saveFavorites(context, playlistId, favsList)
+                    }
+
+                    if (obj.has("catSort")) {
+                        savePlaylistSetting(context, playlistId, "CAT_SORT", obj.getString("catSort"))
+                    }
+                    if (obj.has("chanSort")) {
+                        savePlaylistSetting(context, playlistId, "CHAN_SORT", obj.getString("chanSort"))
+                    }
+                    if (obj.has("customCatOrder")) {
+                        val arr = obj.getJSONArray("customCatOrder")
+                        val lst = mutableListOf<String>()
+                        for (j in 0 until arr.length()) lst.add(arr.getString(j))
+                        saveCustomCategoryOrder(context, playlistId, lst)
+                    }
+                    if (obj.has("hiddenCats")) {
+                        val arr = obj.getJSONArray("hiddenCats")
+                        val set = mutableSetOf<String>()
+                        for (j in 0 until arr.length()) set.add(arr.getString(j))
+                        saveHiddenCategories(context, playlistId, set)
+                    }
+                    if (obj.has("updateInterval")) {
+                        saveUpdateInterval(context, playlistId, obj.getLong("updateInterval"))
                     }
                 }
             }
