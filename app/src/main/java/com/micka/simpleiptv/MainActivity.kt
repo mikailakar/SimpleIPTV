@@ -150,8 +150,34 @@ data class Channel(
     val category: String = "OTHER",
     val logoUrl: String? = null,
     val number: String = "",
-    val id: String = streamUrl
+    val id: String = name
 ) : Serializable
+
+fun clearPlaylistCache(context: Context, playlistId: String) {
+    try {
+        val cacheFile = java.io.File(context.filesDir, "${playlistId}_parsed.dat")
+        if (cacheFile.exists()) cacheFile.delete()
+        context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).edit {
+            remove("LAST_PARSE_$playlistId")
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
+fun isUncategorized(category: String): Boolean {
+    val trimmed = category.trim().lowercase()
+    return trimmed.isEmpty() ||
+           trimmed == "other" ||
+           trimmed == "others" ||
+           trimmed == "uncategorized" ||
+           trimmed == "uncategorised" ||
+           trimmed == "unknown" ||
+           trimmed == "sans categorie" ||
+           trimmed == "sans catégorie" ||
+           trimmed == "sin categoria" ||
+           trimmed == "sin categoría"
+}
 
 data class EpgProgram(
     val title: String,
@@ -686,7 +712,9 @@ fun AppNavigation() {
         }
         "PLAYER" -> {
             val pId = activePlaylist?.id ?: ""
-            val isFav = loadFavorites(context, pId).contains(selectedChannel?.id)
+            val isFav = loadFavorites(context, pId).let { favs ->
+                favs.contains(selectedChannel?.id) || favs.contains(selectedChannel?.name)
+            }
 
             VideoPlayerScreen(
                 playlistId = pId,
@@ -696,7 +724,8 @@ fun AppNavigation() {
                 onToggleFavorite = {
                     selectedChannel?.let { ch ->
                         val currentFavs = loadFavorites(context, pId)
-                        val newFavs = if (currentFavs.contains(ch.id)) currentFavs - ch.id else currentFavs + ch.id
+                        val isCurrent = currentFavs.contains(ch.id) || currentFavs.contains(ch.name)
+                        val newFavs = if (isCurrent) currentFavs.filter { it != ch.id && it != ch.name } else currentFavs + ch.name
                         saveFavorites(context, pId, newFavs)
                     }
                 },
@@ -851,6 +880,9 @@ fun DashboardScreen(onPlaylistClicked: (Playlist) -> Unit, onSettingsClick: () -
             initialPlaylist = editingPlaylist,
             onDismiss = { showAddDialog = false; editingPlaylist = null },
             onSave = { savedPlaylist ->
+                if (editingPlaylist != null) {
+                    clearPlaylistCache(context, savedPlaylist.id)
+                }
                 playlists = if (editingPlaylist == null) playlists + savedPlaylist else playlists.map { if (it.id == savedPlaylist.id) savedPlaylist else it }
                 showAddDialog = false; editingPlaylist = null
             }
@@ -922,7 +954,7 @@ fun LoadingScreen(playlist: Playlist, onLoaded: (List<Channel>) -> Unit, onError
 
                     val objectCacheFile = File(context.filesDir, "${playlist.id}_parsed.dat")
                     val lastParseTime = prefs.getLong("LAST_PARSE_${playlist.id}", 0L)
-                    val updateInterval = context.getSharedPreferences("IPTV_PREFS", Context.MODE_PRIVATE).getLong("UPDATE_INTERVAL", 86400000L)
+                    val updateInterval = getUpdateInterval(context, playlist.id)
 
                     val isCacheValid = if (updateInterval == 0L) {
                         false
@@ -1012,7 +1044,24 @@ fun ChannelListScreen(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
 
-    var favoriteIds by remember { mutableStateOf(loadFavorites(context, playlistId)) }
+    var favoriteIds by remember {
+        val loaded = loadFavorites(context, playlistId)
+        val migrated = loaded.map { fav ->
+            if (fav.startsWith("http://") || fav.startsWith("https://")) {
+                val match = channels.find { ch ->
+                    ch.streamUrl == fav ||
+                    ch.streamUrl.substringAfterLast("/").substringBefore(".") == fav.substringAfterLast("/").substringBefore(".")
+                }
+                match?.name ?: fav
+            } else {
+                fav
+            }
+        }.distinct()
+        if (migrated != loaded) {
+            saveFavorites(context, playlistId, migrated)
+        }
+        mutableStateOf(migrated)
+    }
 
     val catSort = getPlaylistSetting(context, playlistId, "CAT_SORT", "DEFAULT")
     val chanSort = getPlaylistSetting(context, playlistId, "CHAN_SORT", "DEFAULT")
@@ -1040,7 +1089,8 @@ fun ChannelListScreen(
     var showEpgDialog by remember { mutableStateOf(false) }
 
     var previewChannel by remember {
-        mutableStateOf(channels.find { it.id == getLastChannelId(context, playlistId) } ?: channels.firstOrNull())
+        val lastId = getLastChannelId(context, playlistId)
+        mutableStateOf(channels.find { it.id == lastId || it.name == lastId || it.streamUrl == lastId } ?: channels.firstOrNull())
     }
 
     val playlists = remember { loadPlaylists(context) }
@@ -1080,7 +1130,7 @@ fun ChannelListScreen(
             previewChannel?.let { ch ->
                 val savedCategory = getLastCategory(context, playlistId)
 
-                if (savedCategory == "FAVORITES" && favoriteIds.contains(ch.id)) {
+                if (savedCategory == "FAVORITES" && (favoriteIds.contains(ch.id) || favoriteIds.contains(ch.name))) {
                     "FAVORITES"
                 } else {
                     ch.category
@@ -1141,18 +1191,33 @@ fun ChannelListScreen(
         }
     }
 
-    val customCatOrder = remember(catSort) { getCustomCategoryOrder(context, playlistId) }
+    val customCatOrder = getCustomCategoryOrder(context, playlistId)
 
     val categories = remember(channels, hiddenCats, catSort, customCatOrder) {
         val baseCats = channels.map { it.category }.distinct().filter { !hiddenCats.contains(it) }
         val sortedCats = when(catSort) {
-            "A-Z" -> baseCats.sorted()
-            "Z-A" -> baseCats.sortedDescending()
-            "CUSTOM" -> baseCats.sortedBy { cat ->
-                val idx = customCatOrder.indexOf(cat)
-                if (idx == -1) Int.MAX_VALUE else idx
+            "A-Z" -> {
+                val nonOther = baseCats.filter { !isUncategorized(it) }.sorted()
+                val other = baseCats.filter { isUncategorized(it) }
+                nonOther + other
             }
-            else -> baseCats
+            "Z-A" -> {
+                val nonOther = baseCats.filter { !isUncategorized(it) }.sortedDescending()
+                val other = baseCats.filter { isUncategorized(it) }
+                nonOther + other
+            }
+            "CUSTOM" -> {
+                val baseCatsSet = baseCats.toSet()
+                val customSorted = customCatOrder.filter { it in baseCatsSet } + baseCats.filter { it !in customCatOrder }
+                val categorized = customSorted.filter { !isUncategorized(it) }
+                val uncategorized = customSorted.filter { isUncategorized(it) }
+                categorized + uncategorized
+            }
+            else -> {
+                val categorized = baseCats.filter { !isUncategorized(it) }
+                val uncategorized = baseCats.filter { isUncategorized(it) }
+                categorized + uncategorized
+            }
         }
         listOf("ALL", "FAVORITES") + sortedCats
     }
@@ -1161,7 +1226,7 @@ fun ChannelListScreen(
 
     val filteredChannels = remember(channels, selectedCategory, channelSearchQuery, hiddenCats, favoriteIds, chanSort) {
         if (selectedCategory == "FAVORITES") {
-            val favs = favoriteIds.mapNotNull { id -> channels.find { it.id == id } }
+            val favs = favoriteIds.mapNotNull { id -> channels.find { it.id == id || it.name == id } }
             favs.filter {
                 it.name.contains(channelSearchQuery, ignoreCase = true) ||
                         it.number.contains(channelSearchQuery, ignoreCase = true)
@@ -1320,7 +1385,7 @@ fun ChannelListScreen(
                         LazyColumn(state = channelListState) {
                             items(filteredChannels) { channel ->
                                 val isPreviewed = previewChannel?.id == channel.id
-                                val isFavorite = favoriteIds.contains(channel.id)
+                                val isFavorite = favoriteIds.contains(channel.id) || favoriteIds.contains(channel.name)
                                 Row(
                                     modifier = Modifier.fillMaxWidth().clickable { previewChannel = channel }
                                         .background(if (isPreviewed) Color.White.copy(alpha = 0.05f) else Color.Transparent)
@@ -1452,7 +1517,7 @@ fun ChannelListScreen(
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                val isCurrentFav = favoriteIds.contains(previewChannel?.id)
+                                val isCurrentFav = favoriteIds.contains(previewChannel?.id) || favoriteIds.contains(previewChannel?.name)
 
                                 IconButton(
                                     onClick = { showEpgDialog = true },
@@ -1469,7 +1534,7 @@ fun ChannelListScreen(
                                 IconButton(
                                     onClick = {
                                         previewChannel?.let { ch ->
-                                            val newFavorites = if (isCurrentFav) favoriteIds - ch.id else favoriteIds + ch.id
+                                            val newFavorites = if (isCurrentFav) favoriteIds.filter { it != ch.id && it != ch.name } else favoriteIds + ch.name
                                             favoriteIds = newFavorites; saveFavorites(context, playlistId, newFavorites)
                                         }
                                     },
@@ -1603,7 +1668,7 @@ fun ChannelListScreen(
                             Spacer(modifier = Modifier.width(12.dp))
 
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                val isCurrentFav = favoriteIds.contains(previewChannel?.id)
+                                val isCurrentFav = favoriteIds.contains(previewChannel?.id) || favoriteIds.contains(previewChannel?.name)
 
                                 IconButton(
                                     onClick = { showEpgDialog = true },
@@ -1620,7 +1685,7 @@ fun ChannelListScreen(
                                 IconButton(
                                     onClick = {
                                         previewChannel?.let { ch ->
-                                            val newFavorites = if (isCurrentFav) favoriteIds - ch.id else favoriteIds + ch.id
+                                            val newFavorites = if (isCurrentFav) favoriteIds.filter { it != ch.id && it != ch.name } else favoriteIds + ch.name
                                             favoriteIds = newFavorites; saveFavorites(context, playlistId, newFavorites)
                                         }
                                     },
@@ -1709,7 +1774,7 @@ fun ChannelListScreen(
                             } else {
                                 items(filteredChannels) { channel ->
                                     val isPreviewed = previewChannel?.id == channel.id
-                                    val isFavorite = favoriteIds.contains(channel.id)
+                                    val isFavorite = favoriteIds.contains(channel.id) || favoriteIds.contains(channel.name)
 
                                     Row(
                                         modifier = Modifier.fillMaxWidth().clickable { previewChannel = channel }
@@ -1917,8 +1982,28 @@ fun SettingsScreen(
     var showCatReorderDialog by remember { mutableStateOf(false) }
     var showFavReorderDialog by remember { mutableStateOf(false) }
 
-    val allCategories = remember { channels.map { it.category }.distinct() }
-    var favoriteIds by remember { mutableStateOf(loadFavorites(context, playlistId)) }
+    val allCategories = remember(channels) { channels.map { it.category }.distinct() }
+    val defaultCategories = remember(channels) {
+        allCategories.filter { !isUncategorized(it) } + allCategories.filter { isUncategorized(it) }
+    }
+    var favoriteIds by remember {
+        val loaded = loadFavorites(context, playlistId)
+        val migrated = loaded.map { fav ->
+            if (fav.startsWith("http://") || fav.startsWith("https://")) {
+                val match = channels.find { ch ->
+                    ch.streamUrl == fav ||
+                    ch.streamUrl.substringAfterLast("/").substringBefore(".") == fav.substringAfterLast("/").substringBefore(".")
+                }
+                match?.name ?: fav
+            } else {
+                fav
+            }
+        }.distinct()
+        if (migrated != loaded) {
+            saveFavorites(context, playlistId, migrated)
+        }
+        mutableStateOf(migrated)
+    }
 
     val rootBgColor = if (bgColorSetting == "BLACK") Color.Black else Color(0xFF070B14)
 
@@ -2020,17 +2105,30 @@ fun SettingsScreen(
 
     if (showCatReorderDialog) {
         val savedOrder = getCustomCategoryOrder(context, playlistId)
-        val initialList = savedOrder.filter { allCategories.contains(it) } + allCategories.filter { !savedOrder.contains(it) }
+        val initialList = if (savedOrder.isNotEmpty()) {
+            val known = savedOrder.filter { allCategories.contains(it) }
+            val remaining = allCategories.filter { !known.contains(it) }
+            val combined = known + remaining
+            combined.filter { !isUncategorized(it) } + combined.filter { isUncategorized(it) }
+        } else {
+            defaultCategories
+        }
 
-        ReorderDialog(title = "Reorder Categories", items = initialList, itemLabel = { it }, onDismiss = { showCatReorderDialog = false }) { newList ->
+        ReorderDialog(
+            title = "Reorder Categories",
+            items = initialList,
+            itemLabel = { it },
+            defaultItems = defaultCategories,
+            onDismiss = { showCatReorderDialog = false }
+        ) { newList ->
             saveCustomCategoryOrder(context, playlistId, newList)
         }
     }
 
     if (showFavReorderDialog) {
-        val favoriteChannels = favoriteIds.mapNotNull { id -> channels.find { it.id == id } }
+        val favoriteChannels = favoriteIds.mapNotNull { id -> channels.find { it.id == id || it.name == id } }
         ReorderDialog(title = "Reorder Favorites", items = favoriteChannels, itemLabel = { it.name }, onDismiss = { showFavReorderDialog = false }) { newList ->
-            val newIds = newList.map { it.id }
+            val newIds = newList.map { it.name }
             favoriteIds = newIds
             saveFavorites(context, playlistId, newIds)
         }
@@ -2995,14 +3093,14 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
                     val loaded = mutableListOf<Pair<Playlist, JSONObject>>()
                     for (i in 0 until jsonArray.length()) {
                         val obj = jsonArray.getJSONObject(i)
-                        val playlistId = obj.getString("id")
+                        val playlistId = UUID.randomUUID().toString()
                         val playlist = Playlist(
                             id = playlistId,
                             name = obj.getString("name"),
                             type = obj.getString("type"),
                             url = obj.getString("url"),
-                            username = obj.getString("username"),
-                            password = obj.getString("password")
+                            username = obj.optString("username", ""),
+                            password = obj.optString("password", "")
                         )
                         loaded.add(playlist to obj)
                     }
@@ -3023,7 +3121,6 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
                     val jsonArray = JSONArray()
                     playlistsToSave.forEach { playlist ->
                         val obj = JSONObject()
-                        obj.put("id", playlist.id)
                         obj.put("name", playlist.name)
                         obj.put("type", playlist.type)
                         obj.put("url", playlist.url)
@@ -3161,6 +3258,9 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
             initialPlaylist = editingPlaylist,
             onDismiss = { showAddDialog = false; editingPlaylist = null },
             onSave = { savedPlaylist ->
+                if (editingPlaylist != null) {
+                    clearPlaylistCache(context, savedPlaylist.id)
+                }
                 playlists = if (editingPlaylist == null) playlists + savedPlaylist else playlists.map { if (it.id == savedPlaylist.id) savedPlaylist else it }
                 showAddDialog = false; editingPlaylist = null
             }
@@ -3274,8 +3374,15 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
     }
 }
     @Composable
-    fun <T> ReorderDialog(title: String, items: List<T>, itemLabel: (T) -> String, onDismiss: () -> Unit, onSave: (List<T>) -> Unit) {
-        var currentList by remember { mutableStateOf(items) }
+    fun <T> ReorderDialog(
+        title: String,
+        items: List<T>,
+        itemLabel: (T) -> String,
+        defaultItems: List<T>? = null,
+        onDismiss: () -> Unit,
+        onSave: (List<T>) -> Unit
+    ) {
+        var currentList by remember(items) { mutableStateOf(items) }
         var selectedItems by remember { mutableStateOf(setOf<T>()) }
 
         val listState = rememberLazyListState()
@@ -3339,7 +3446,20 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
                     ) {
                         Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (defaultItems != null) {
+                                Text(
+                                    "Default",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF38BDF8),
+                                    modifier = Modifier.clickable {
+                                        currentList = defaultItems
+                                        selectedItems = emptySet()
+                                        coroutineScope.launch { listState.scrollToItem(0) }
+                                    }.padding(4.dp)
+                                )
+                            }
                             Text(
                                 "Cancel",
                                 fontSize = 12.sp,
@@ -3413,7 +3533,10 @@ fun DashboardSettingsScreen(onBack: () -> Unit) {
                     Spacer(modifier = Modifier.height(8.dp))
 
                     LazyColumn(state = listState, modifier = Modifier.heightIn(max = 350.dp)) {
-                        items(currentList.size) { index ->
+                        items(currentList.size, key = { index ->
+                            val itm = currentList[index]
+                            itemLabel(itm).ifEmpty { index.toString() }
+                        }) { index ->
                             val item = currentList[index]
                             val isSelected = item in selectedItems
 
